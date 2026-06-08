@@ -2,6 +2,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const dns = require("dns").promises; // Built-in Node.js DNS module (async)
+const { sendVerificationEmail } = require("../utils/emailService");
 
 // Basic format validation
 const validateEmailFormat = (email) => {
@@ -74,8 +75,25 @@ const authController = {
     }
 
     try {
-      await User.create(name, email, password);
-      res.redirect("/login");
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      // Create user (add isVerified: false column in DB if needed)
+      await User.createWithVerification(name, email, hashedPassword); // Updated model method
+
+      // Generate verification token
+      const verificationToken = jwt.sign(
+        { email },
+        process.env.VERIFICATION_SECRET || process.env.JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      // Send verification email via real SMTP
+      await sendVerificationEmail(email, verificationToken);
+
+      res.render("signup", { 
+        success: "Account created! Please check your email to verify." 
+      });
+      // Or redirect to a "check email" page
     } catch (err) {
       console.error(err);
       if (err.code === "ER_DUP_ENTRY") {
@@ -83,6 +101,20 @@ const authController = {
         return res.render("signup", { errors });
       }
       res.status(500).send("Error creating account");
+    }
+  },
+
+ // New: Verify email
+  verifyEmail: async (req, res) => {
+    const { token } = req.query;
+    if (!token) return res.status(400).send("Invalid token");
+
+    try {
+      const decoded = jwt.verify(token, process.env.VERIFICATION_SECRET || process.env.JWT_SECRET);
+      await User.verifyUser(decoded.email);
+      res.send("Email verified successfully! You can now <a href='/login'>login</a>.");
+    } catch (err) {
+      res.status(400).send("Invalid or expired token.");
     }
   },
 

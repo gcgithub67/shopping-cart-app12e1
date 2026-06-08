@@ -8,4 +8,7 @@ router.post("/signup", authController.signup);
 router.post("/login", authController.login);
 router.get("/logout", authController.logout);
 
+// ... existing
+router.get("/verify-email", authController.verifyEmail);  // Add this
+
 module.exports = router;

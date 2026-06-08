@@ -73,7 +73,39 @@ const User = {
         }
       );
     });
-  }
-};
+  },
 
+
+    createWithVerification: async (name, email, hashedPassword) => {
+    return new Promise((resolve, reject) => {
+      db.query(
+        "INSERT INTO users (name, email, password, is_verified) VALUES (?, ?, ?, ?)",
+        [name, email, hashedPassword, false],
+        (err, result) => {
+          if (err) reject(err);
+          resolve(result);
+        }
+      );
+    });
+  },
+
+  verifyUser: (email) => {
+    return new Promise((resolve, reject) => {
+      db.query(
+        "UPDATE users SET is_verified = true WHERE email = ?",
+        [email],
+        (err, result) => {
+          if (err) reject(err);
+          resolve(result);
+        }
+      );
+    });
+  },
+
+  // In findByEmail / login, add check if needed:
+  // if (!user.is_verified) throw new Error("Email not verified");
+
+  // In findByEmail / login, add check if needed:
+  // if (!user.is_verified) throw new Error("Email not verified");
+};
 module.exports = User;
