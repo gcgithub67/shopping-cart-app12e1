@@ -10,7 +10,7 @@ const validateEmailFormat = (email) => {
   return re.test(email);
 };
 
-// Improved: Check both domain MX records + basic "live" username validation
+// Alternative: Flexible email validation (MX check is now optional/fallback)
 const validateEmailDomainAndUser = async (email) => {
   try {
     const [localPart, domain] = email.split("@");
@@ -19,25 +19,32 @@ const validateEmailDomainAndUser = async (email) => {
       return { valid: false, message: "Invalid username part in email" };
     }
 
-    // Basic username (local-part) validation - allow common characters
+    // Basic username validation
     const localRe = /^[a-zA-Z0-9._%+-]+$/;
     if (!localRe.test(localPart)) {
       return { valid: false, message: "Email username contains invalid characters" };
     }
 
-    // MX Record check (domain must be able to receive email)
-    const mxRecords = await dns.resolveMx(domain);
-    if (!mxRecords || mxRecords.length === 0) {
-      return { valid: false, message: "Domain does not have valid MX records" };
+    // MX Record check (non-blocking in dev / when DNS fails)
+    try {
+      const mxRecords = await dns.resolveMx(domain);
+      if (!mxRecords || mxRecords.length === 0) {
+        console.warn(`No MX records found for ${domain} (email may still be valid)`);
+        // Continue anyway - many legitimate domains have transient DNS issues
+      } else {
+        console.log(`✅ Valid MX records found for ${domain}`);
+      }
+    } catch (mxErr) {
+      // ECONNREFUSED, timeout, etc. → log but allow signup in dev
+      console.warn(`MX check skipped for ${email}: ${mxErr.message}. Proceeding with basic validation.`);
+      // In production you could make this stricter if needed
     }
 
     return { valid: true };
   } catch (err) {
     console.error(`Email validation failed for ${email}:`, err.message);
-    return { 
-      valid: false, 
-      message: "Please use a valid email with live domain (MX records)" 
-    };
+    // Fallback: still allow if format is good (safer for localhost/dev)
+    return { valid: true, warning: "Email domain check skipped" };
   }
 };
 
@@ -59,11 +66,12 @@ const authController = {
     if (!email || !validateEmailFormat(email)) {
       errors.push("Please provide a valid email address.");
     } else {
-      // === Enhanced Check: Live username + Domain with MX records ===
       const emailCheck = await validateEmailDomainAndUser(email);
       if (!emailCheck.valid) {
         errors.push(emailCheck.message);
       }
+      // Optional: show warning but continue
+      // if (emailCheck.warning) console.log(emailCheck.warning);
     }
 
     if (!password || !validatePassword(password)) {
@@ -71,36 +79,46 @@ const authController = {
     }
 
     if (errors.length > 0) {
-      return res.render("signup", { errors, name, email }); // Repopulate form
+      return res.render("signup", { errors, name, email });
     }
+
+
 
     try {
       const hashedPassword = await bcrypt.hash(password, 10);
       
-      // Create user (add isVerified: false column in DB if needed)
-      await User.createWithVerification(name, email, hashedPassword); // Updated model method
+      // Create user (unverified)
+      await User.createWithVerification(name, email, hashedPassword);
 
-      // Generate verification token
+      // Generate token
       const verificationToken = jwt.sign(
         { email },
         process.env.VERIFICATION_SECRET || process.env.JWT_SECRET,
         { expiresIn: '24h' }
       );
 
-      // Send verification email via real SMTP
+      // Send email (critical part)
       await sendVerificationEmail(email, verificationToken);
 
-      res.render("signup", { 
-        success: "Account created! Please check your email to verify." 
+      // Success with flash-style message
+      return res.render("signup", { 
+        success: "Account created successfully! A verification email has been sent to your inbox. Please verify to login." 
       });
-      // Or redirect to a "check email" page
     } catch (err) {
-      console.error(err);
+      console.error("Signup error:", err);
+      
       if (err.code === "ER_DUP_ENTRY") {
-        errors.push("Email already registered.");
-        return res.render("signup", { errors });
+        return res.render("signup", { errors: ["Email already registered."] });
       }
-      res.status(500).send("Error creating account");
+      
+      // If email sending failed specifically
+      if (err.message.includes('Failed to send verification email')) {
+        return res.render("signup", { 
+          errors: ["Account created but verification email failed to send. Please contact support or try again."] 
+        });
+      }
+      
+      res.status(500).render("signup", { errors: ["Server error. Please try again."] });
     }
   },
 
