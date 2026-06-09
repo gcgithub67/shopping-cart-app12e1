@@ -16,6 +16,12 @@
             </div>
           <% } %>
 
+          <% if (typeof success !== 'undefined' && success) { %>
+  <div class="alert alert-success">
+    <%= success %>
+  </div>
+<% } %>
+
           <form action="/signup" method="POST">
             <div class="mb-3">
               <label>Full Name</label>
